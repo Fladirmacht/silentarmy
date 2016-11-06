@@ -41,6 +41,32 @@ __constant ulong blake_iv[] =
     0x1f83d9abfb41bd6b, 0x5be0cd19137e2179,
 };
 
+uint read_uint_unaligned(__global uint *ptr)
+{
+  uchar4 X = vload4(0, (__global uchar*)ptr);
+  return *(uint*)&X;
+}
+
+ulong read_ulong_unaligned(__global ulong *ptr)
+{
+  uchar8 X = vload8(0, (__global uchar*)ptr);
+  return *(ulong*)&X;
+}
+
+void write_uint_unaligned(__global uint *ptr, uint value)
+{
+  uchar4 X;
+  *(uint*)&X = value;
+  vstore4(X, 0, (__global uchar*)ptr);
+}
+
+void write_ulong_unaligned(__global ulong *ptr, ulong value)
+{
+  uchar8 X;
+  *(ulong*)&X = value;
+  vstore8(X, 0, (__global uchar*)ptr);
+}
+
 /*
 ** Reset counters in hash table.
 */
@@ -80,89 +106,64 @@ void kernel_init_ht(__global char *ht)
 uint ht_store(uint round, __global char *ht, uint i,
         ulong xi0, ulong xi1, ulong xi2, ulong xi3)
 {
-    uint		row;
-    __global char       *p;
-    uint                cnt;
-#if NR_ROWS_LOG == 16
+    uint row;
+    __global char *p;
+    uint cnt;
+# 138 "input.cl"
     if (!(round % 2))
-	row = (xi0 & 0xffff);
+ row = (xi0 & 0xffff) | ((xi0 & 0xf00000) >> 4);
     else
-	// if we have in hex: "ab cd ef..." (little endian xi0) then this
-	// formula computes the row as 0xdebc. it skips the 'a' nibble as it
-	// is part of the PREFIX. The Xi will be stored starting with "ef...";
-	// 'e' will be considered padding and 'f' is part of the current PREFIX
-	row = ((xi0 & 0xf00) << 4) | ((xi0 & 0xf00000) >> 12) |
-	    ((xi0 & 0xf) << 4) | ((xi0 & 0xf000) >> 12);
-#elif NR_ROWS_LOG == 18
-    if (!(round % 2))
-	row = (xi0 & 0xffff) | ((xi0 & 0xc00000) >> 6);
-    else
-	row = ((xi0 & 0xc0000) >> 2) |
-	    ((xi0 & 0xf00) << 4) | ((xi0 & 0xf00000) >> 12) |
-	    ((xi0 & 0xf) << 4) | ((xi0 & 0xf000) >> 12);
-#elif NR_ROWS_LOG == 19
-    if (!(round % 2))
-	row = (xi0 & 0xffff) | ((xi0 & 0xe00000) >> 5);
-    else
-	row = ((xi0 & 0xe0000) >> 1) |
-	    ((xi0 & 0xf00) << 4) | ((xi0 & 0xf00000) >> 12) |
-	    ((xi0 & 0xf) << 4) | ((xi0 & 0xf000) >> 12);
-#elif NR_ROWS_LOG == 20
-    if (!(round % 2))
-	row = (xi0 & 0xffff) | ((xi0 & 0xf00000) >> 4);
-    else
-	row = ((xi0 & 0xf0000) >> 0) |
-	    ((xi0 & 0xf00) << 4) | ((xi0 & 0xf00000) >> 12) |
-	    ((xi0 & 0xf) << 4) | ((xi0 & 0xf000) >> 12);
-#else
-#error "unsupported NR_ROWS_LOG"
-#endif
+ row = ((xi0 & 0xf0000) >> 0) |
+     ((xi0 & 0xf00) << 4) | ((xi0 & 0xf00000) >> 12) |
+     ((xi0 & 0xf) << 4) | ((xi0 & 0xf000) >> 12);
+
+
+
     xi0 = (xi0 >> 16) | (xi1 << (64 - 16));
     xi1 = (xi1 >> 16) | (xi2 << (64 - 16));
     xi2 = (xi2 >> 16) | (xi3 << (64 - 16));
-    p = ht + row * NR_SLOTS * SLOT_LEN;
+    p = ht + row * ((1 << (((200 / (9 + 1)) + 1) - 20)) * 9) * 32;
     cnt = atomic_inc((__global uint *)p);
-    if (cnt >= NR_SLOTS)
+    if (cnt >= ((1 << (((200 / (9 + 1)) + 1) - 20)) * 9))
         return 1;
-    p += cnt * SLOT_LEN + xi_offset_for_round(round);
-    // store "i" (always 4 bytes before Xi)
+    p += cnt * 32 + (8 + ((round) / 2) * 4);
+
     *(__global uint *)(p - 4) = i;
     if (round == 0 || round == 1)
       {
-	// store 24 bytes
-	*(__global ulong *)(p + 0) = xi0;
-	*(__global ulong *)(p + 8) = xi1;
-	*(__global ulong *)(p + 16) = xi2;
+
+ *(__global ulong *)(p + 0) = xi0;
+ *(__global ulong *)(p + 8) = xi1;
+ *(__global ulong *)(p + 16) = xi2;
       }
     else if (round == 2)
       {
-	// store 20 bytes
-	*(__global ulong *)(p + 0) = xi0;
-	*(__global ulong *)(p + 8) = xi1;
-	*(__global uint *)(p + 16) = xi2;
+
+    write_ulong_unaligned((__global ulong *)(p + 0), xi0);
+    write_ulong_unaligned((__global ulong *)(p + 8), xi1);
+    write_uint_unaligned((__global uint *)(p + 16), xi2);
       }
     else if (round == 3 || round == 4)
       {
-	// store 16 bytes
-	*(__global ulong *)(p + 0) = xi0;
-	*(__global ulong *)(p + 8) = xi1;
 
+    write_ulong_unaligned((__global ulong *)(p + 0), xi0);
+    write_ulong_unaligned((__global ulong *)(p + 8), xi1);
       }
     else if (round == 5)
       {
-	// store 12 bytes
-	*(__global ulong *)(p + 0) = xi0;
-	*(__global uint *)(p + 8) = xi1;
+
+  *(__global ulong *)(p + 0) = xi0;
+  *(__global uint *)(p + 8) = xi1;
       }
     else if (round == 6 || round == 7)
       {
-	// store 8 bytes
-	*(__global ulong *)(p + 0) = xi0;
+
+    write_ulong_unaligned((__global ulong *)(p + 0), xi0);
       }
     else if (round == 8)
       {
-	// store 4 bytes
-	*(__global uint *)(p + 0) = xi0;
+
+ *(__global uint *)(p + 0) = xi0;
       }
     return 0;
 }
@@ -413,80 +414,80 @@ void kernel_round0(__global ulong *blake_state, __global char *ht,
 ** Return 0 if successfully stored, or 1 if the row overflowed.
 */
 uint xor_and_store(uint round, __global char *ht_dst, uint row,
-	uint slot_a, uint slot_b, __global ulong *a, __global ulong *b)
+ uint slot_a, uint slot_b, __global ulong *a, __global ulong *b)
 {
-    ulong	xi0, xi1, xi2;
-#if NR_ROWS_LOG >= 16 && NR_ROWS_LOG <= 20
-    // Note: for NR_ROWS_LOG == 20, for odd rounds, we could optimize by not
-    // storing the byte containing bits from the previous PREFIX block for
+    ulong xi0, xi1, xi2;
+
+
+
     if (round == 1 || round == 2)
       {
-	// xor 24 bytes
-	xi0 = *(a++) ^ *(b++);
-	xi1 = *(a++) ^ *(b++);
-	xi2 = *a ^ *b;
-	if (round == 2)
-	  {
-	    // skip padding byte
-	    xi0 = (xi0 >> 8) | (xi1 << (64 - 8));
-	    xi1 = (xi1 >> 8) | (xi2 << (64 - 8));
-	    xi2 = (xi2 >> 8);
-	  }
+
+  xi0 = *(a++) ^ *(b++);
+  xi1 = *(a++) ^ *(b++);
+  xi2 = *a ^ *b;
+ if (round == 2)
+   {
+
+      xi0 = (xi0 >> 8) | (xi1 << (64 - 8));
+      xi1 = (xi1 >> 8) | (xi2 << (64 - 8));
+      xi2 = (xi2 >> 8);
+   }
       }
     else if (round == 3)
       {
-	// xor 20 bytes
-	xi0 = *a++ ^ *b++;
-	xi1 = *a++ ^ *b++;
-	xi2 = *(__global uint *)a ^ *(__global uint *)b;
+
+    xi0 = read_ulong_unaligned(a) ^ read_ulong_unaligned(b); a++; b++;
+    xi1 = read_ulong_unaligned(a) ^ read_ulong_unaligned(b); a++; b++;
+    xi2 = read_uint_unaligned((__global uint*)a) ^ read_uint_unaligned((__global uint8*)b);
       }
     else if (round == 4 || round == 5)
       {
-	// xor 16 bytes
-	xi0 = *a++ ^ *b++;
-	xi1 = *a ^ *b;
-	xi2 = 0;
-	if (round == 4)
-	  {
-	    // skip padding byte
-	    xi0 = (xi0 >> 8) | (xi1 << (64 - 8));
-	    xi1 = (xi1 >> 8);
-	  }
+
+    xi0 = read_ulong_unaligned(a) ^ read_ulong_unaligned(b); a++; b++;
+    xi1 = read_ulong_unaligned(a) ^ read_ulong_unaligned(b);
+ xi2 = 0;
+ if (round == 4)
+   {
+
+     xi0 = (xi0 >> 8) | (xi1 << (64 - 8));
+     xi1 = (xi1 >> 8);
+   }
       }
     else if (round == 6)
       {
-	// xor 12 bytes
-	xi0 = *a++ ^ *b++;
-	xi1 = *(__global uint *)a ^ *(__global uint *)b;
-	xi2 = 0;
-	if (round == 6)
-	  {
-	    // skip padding byte
-	    xi0 = (xi0 >> 8) | (xi1 << (64 - 8));
-	    xi1 = (xi1 >> 8);
-	  }
+
+  xi0 = *a++ ^ *b++;
+  xi1 = *(__global uint *)a ^ *(__global uint *)b;
+  xi2 = 0;
+ if (round == 6)
+   {
+
+     xi0 = (xi0 >> 8) | (xi1 << (64 - 8));
+     xi1 = (xi1 >> 8);
+   }
       }
     else if (round == 7 || round == 8)
       {
-	// xor 8 bytes
-	xi0 = *a ^ *b;
-	xi1 = 0;
-	xi2 = 0;
-	if (round == 8)
-	  {
-	    // skip padding byte
-	    xi0 = (xi0 >> 8);
-	  }
+
+    xi0 = read_ulong_unaligned(a) ^ read_ulong_unaligned(b);
+ xi1 = 0;
+ xi2 = 0;
+ if (round == 8)
+   {
+
+     xi0 = (xi0 >> 8);
+   }
       }
-    // invalid solutions (which start happenning in round 5) have duplicate
-    // inputs and xor to zero, so discard them
+
+
     if (!xi0 && !xi1)
-	return 0;
-#else
-#error "unsupported NR_ROWS_LOG"
-#endif
-    return ht_store(round, ht_dst, ENCODE_INPUTS(row, slot_a, slot_b),
-	    xi0, xi1, xi2, 0);
+ return 0;
+
+
+
+    return ht_store(round, ht_dst, ((row << 12) | ((slot_b & 0x3f) << 6) | (slot_a & 0x3f)),
+     xi0, xi1, xi2, 0);
 }
 
 /*
@@ -508,8 +509,7 @@ void equihash_round(uint round, __global char *ht_src, __global char *ht_dst,
     ushort		collisions[NR_SLOTS * 3];
     uint                nr_coll = 0;
     uint                n;
-    uint		dropped_coll = 0;
-    uint		dropped_stor = 0;
+    uint                dropped_coll, dropped_stor;
     __global ulong      *a, *b;
     uint		xi_offset;
     // read first words of Xi from the previous (round - 1) hash table
@@ -529,18 +529,14 @@ void equihash_round(uint round, __global char *ht_src, __global char *ht_dst,
     p = (ht_src + tid * NR_SLOTS * SLOT_LEN);
     cnt = *(__global uint *)p;
     cnt = min(cnt, (uint)NR_SLOTS); // handle possible overflow in prev. round
-    if (!cnt)
-	// no elements in row, no collisions
-	return ;
-#if NR_ROWS_LOG != 20 || !OPTIM_FOR_FGLRX
     p += xi_offset;
     for (i = 0; i < cnt; i++, p += SLOT_LEN)
         first_words[i] = *(__global uchar *)p;
-#endif
     // find collisions
+    nr_coll = 0;
+    dropped_coll = 0;
     for (i = 0; i < cnt; i++)
         for (j = i + 1; j < cnt; j++)
-#if NR_ROWS_LOG != 20 || !OPTIM_FOR_FGLRX
             if ((first_words[i] & mask) ==
 		    (first_words[j] & mask))
               {
@@ -557,13 +553,11 @@ void equihash_round(uint round, __global char *ht_src, __global char *ht_dst,
 #endif
               }
     // XOR colliding pairs of Xi
+    dropped_stor = 0;
     for (n = 0; n < nr_coll; n++)
       {
         i = collisions[n] & 0xff;
         j = collisions[n] >> 8;
-#else
-      {
-#endif
         a = (__global ulong *)
             (ht_src + tid * NR_SLOTS * SLOT_LEN + i * SLOT_LEN + xi_offset);
         b = (__global ulong *)
