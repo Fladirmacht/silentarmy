@@ -4,9 +4,7 @@ SILENTARMY is a [Zcash](https://z.cash) miner for Linux written in OpenCL with
 multi-GPU support. The
 [Stratum](https://github.com/str4d/zips/blob/77-zip-stratum/drafts/str4d-stratum/draft1.rst) protocol is implemented for connecting to mining pools. It runs
 best on AMD GPUs but has also been reported to work on other OpenCL devices such
-as Xeon Phi, Intel GPUs, and through OpenCL CPU drivers. (Nvidia GPUs are not
-currently supported due to an
-[issue](https://github.com/mbevand/silentarmy/issues/6).)
+as Xeon Phi, Intel GPUs, and through OpenCL CPU drivers with NVIDIA support.
 
 After compiling SILENTARMY, list the available OpenCL devices:
 
